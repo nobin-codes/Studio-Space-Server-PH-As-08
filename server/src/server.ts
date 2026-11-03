@@ -1,3 +1,4 @@
+
 import express, { Request, Response } from "express";
 import { toNodeHandler } from "better-auth/node";
 import cors from "cors";
@@ -15,18 +16,19 @@ const startServer = async () => {
 
     const auth = createAuth();
 
-   // CORS must run before all routes
-app.use(
-  cors({
-    origin: "http://localhost:3000",
-    credentials: true,
-  })
-);
+    app.use(
+      cors({
+        origin: [
+          "http://localhost:3000",
+          "https://studio-space-nu.vercel.app",
+        ],
+        credentials: true,
+      })
+    );
 
-// Better Auth must come before express.json()
-app.all("/api/auth/{*any}", toNodeHandler(auth));
+    app.all("/api/auth/{*any}", toNodeHandler(auth));
 
-app.use(express.json());
+    app.use(express.json());
 
     app.get("/", (req: Request, res: Response) => {
       res.status(200).json({
@@ -39,7 +41,7 @@ app.use(express.json());
     app.use("/api/bookings", bookingRoutes);
 
     app.listen(PORT, () => {
-      console.log(`StudioSpace server running on http://localhost:${PORT}`);
+      console.log(`StudioSpace server running on port ${PORT}`);
     });
   } catch (error) {
     console.error("Server startup failed:", error);
