@@ -3,33 +3,32 @@ import { Request, Response } from "express";
 import { ObjectId } from "mongodb";
 import { getDB } from "../config/db.js";
 import { Booking } from "../models/booking.model.js";
+import { AuthenticatedRequest } from "../middleware/auth.middleware.js";
+
+interface Studio {
+  _id: ObjectId;
+  title: string;
+  hourlyRate: number;
+}
+
+const getAuthenticatedUser = (req: Request) =>
+  (req as AuthenticatedRequest).user;
 
 export const createBooking = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
+    const user = getAuthenticatedUser(req);
+
     const {
       studioId,
-      studioTitle,
-      userEmail,
-      userName,
       bookingDate,
       startTime,
       endTime,
-      totalPrice,
     } = req.body;
 
-    if (
-      !studioId ||
-      !studioTitle ||
-      !userEmail ||
-      !userName ||
-      !bookingDate ||
-      !startTime ||
-      !endTime ||
-      typeof totalPrice !== "number"
-    ) {
+    if (!studioId || !bookingDate || !startTime || !endTime) {
       res.status(400).json({
         success: false,
         message: "Please provide all required booking information",
@@ -45,7 +44,25 @@ export const createBooking = async (
       return;
     }
 
-    if (startTime >= endTime) {
+    const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+    if (!timePattern.test(startTime) || !timePattern.test(endTime)) {
+      res.status(400).json({
+        success: false,
+        message: "Please provide valid booking times",
+      });
+      return;
+    }
+
+    const startMinutes =
+      Number(startTime.slice(0, 2)) * 60 +
+      Number(startTime.slice(3, 5));
+
+    const endMinutes =
+      Number(endTime.slice(0, 2)) * 60 +
+      Number(endTime.slice(3, 5));
+
+    if (endMinutes <= startMinutes) {
       res.status(400).json({
         success: false,
         message: "End time must be later than start time",
@@ -55,7 +72,7 @@ export const createBooking = async (
 
     const db = getDB();
 
-    const studio = await db.collection("studios").findOne({
+    const studio = await db.collection<Studio>("studios").findOne({
       _id: new ObjectId(studioId),
     });
 
@@ -67,7 +84,7 @@ export const createBooking = async (
       return;
     }
 
-    const conflictingBooking = await db.collection("bookings").findOne({
+    const conflictingBooking = await db.collection<Booking>("bookings").findOne({
       studioId: new ObjectId(studioId),
       bookingDate,
       status: "Confirmed",
@@ -83,21 +100,34 @@ export const createBooking = async (
       return;
     }
 
+    const duration = (endMinutes - startMinutes) / 60;
+    const totalPrice = duration * studio.hourlyRate;
+
+    if (!Number.isFinite(totalPrice) || totalPrice < 0) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid studio pricing",
+      });
+      return;
+    }
+
+    const now = new Date();
+
     const bookingData: Booking = {
       studioId: new ObjectId(studioId),
-      studioTitle,
-      userEmail,
-      userName,
+      studioTitle: studio.title,
+      userEmail: user.email,
+      userName: user.name,
       bookingDate,
       startTime,
       endTime,
       totalPrice,
       status: "Pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const result = await db.collection("bookings").insertOne(bookingData);
+    const result = await db.collection<Booking>("bookings").insertOne(bookingData);
 
     res.status(201).json({
       success: true,
@@ -122,21 +152,13 @@ export const getMyBookings = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { email } = req.query;
-
-    if (!email || typeof email !== "string") {
-      res.status(400).json({
-        success: false,
-        message: "User email is required",
-      });
-      return;
-    }
+    const user = getAuthenticatedUser(req);
 
     const db = getDB();
 
     const bookings = await db
-      .collection("bookings")
-      .find({ userEmail: email })
+      .collection<Booking>("bookings")
+      .find({ userEmail: user.email })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -160,6 +182,7 @@ export const cancelBooking = async (
   res: Response
 ): Promise<void> => {
   try {
+    const user = getAuthenticatedUser(req);
     const id = req.params.id as string;
 
     if (!ObjectId.isValid(id)) {
@@ -172,28 +195,12 @@ export const cancelBooking = async (
 
     const db = getDB();
 
-    const booking = await db.collection("bookings").findOne({
-      _id: new ObjectId(id),
-    });
-
-    if (!booking) {
-      res.status(404).json({
-        success: false,
-        message: "Booking not found",
-      });
-      return;
-    }
-
-    if (booking.status !== "Pending") {
-      res.status(400).json({
-        success: false,
-        message: "Only pending bookings can be cancelled",
-      });
-      return;
-    }
-
-    await db.collection("bookings").updateOne(
-      { _id: new ObjectId(id), status: "Pending" },
+    const result = await db.collection<Booking>("bookings").updateOne(
+      {
+        _id: new ObjectId(id),
+        userEmail: user.email,
+        status: "Pending",
+      },
       {
         $set: {
           status: "Cancelled",
@@ -201,6 +208,14 @@ export const cancelBooking = async (
         },
       }
     );
+
+    if (result.modifiedCount === 0) {
+      res.status(404).json({
+        success: false,
+        message: "Booking not found or cannot be cancelled",
+      });
+      return;
+    }
 
     res.status(200).json({
       success: true,
