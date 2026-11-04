@@ -30,11 +30,22 @@ const startServer = async () => {
 
     app.use(express.json());
 
+    // Google Search Console ownership verification
     app.get("/", (req: Request, res: Response) => {
-      res.status(200).json({
-        success: true,
-        message: "StudioSpace API is running successfully!",
-      });
+      res.status(200).type("html").send(`
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="google-site-verification" content="EGjwAPDNMF_pikRdVYsVCpq9MQaAcgwcG0mhPQGJVNA" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>StudioSpace API</title>
+          </head>
+          <body>
+            <h1>StudioSpace API is running successfully!</h1>
+          </body>
+        </html>
+      `);
     });
 
     app.use("/api/studios", studioRoutes);
