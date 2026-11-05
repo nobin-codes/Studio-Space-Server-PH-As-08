@@ -11,6 +11,13 @@ export const createAuth = () => {
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL,
 
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"],
+      },
+    },
+
     advanced: {
       defaultCookieAttributes: {
         sameSite: "none",
