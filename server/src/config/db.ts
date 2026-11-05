@@ -1,3 +1,4 @@
+
 import { MongoClient, Db } from "mongodb";
 
 const uri = process.env.MONGODB_URI;
@@ -8,25 +9,28 @@ if (!uri) {
 }
 
 const client = new MongoClient(uri);
+const database: Db = client.db(dbName);
 
-let database: Db;
+let connectionPromise: Promise<void> | null = null;
 
 export const connectDB = async (): Promise<Db> => {
-  await client.connect();
+  if (!connectionPromise) {
+    connectionPromise = client.connect().then(async () => {
+      await database.command({ ping: 1 });
+      console.log("MongoDB connected successfully!");
+    });
+  }
 
-  database = client.db(dbName);
-
-  await database.command({ ping: 1 });
-
-  console.log("MongoDB connected successfully!");
+  try {
+    await connectionPromise;
+  } catch (error) {
+    connectionPromise = null;
+    throw error;
+  }
 
   return database;
 };
 
 export const getDB = (): Db => {
-  if (!database) {
-    throw new Error("Database is not connected yet");
-  }
-
   return database;
 };

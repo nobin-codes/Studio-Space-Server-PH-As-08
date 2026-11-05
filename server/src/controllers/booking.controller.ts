@@ -14,6 +14,30 @@ interface Studio {
 const getAuthenticatedUser = (req: Request) =>
   (req as AuthenticatedRequest).user;
 
+const isValidBookingDate = (date: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return false;
+  }
+
+  const [year, month, day] = date.split("-").map(Number);
+
+  if (year < 1 || month < 1 || month > 12) {
+    return false;
+  }
+
+  const daysInMonth = new Date(
+    Date.UTC(year, month, 0)
+  ).getUTCDate();
+
+  return day >= 1 && day <= daysInMonth;
+};
+
+const isValidTime = (time: string): boolean =>
+  /^([01]\d|2[0-3]):([0-5]\d)$/.test(time);
+
+const getTimeInMinutes = (time: string): number =>
+  Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+
 export const createBooking = async (
   req: Request,
   res: Response
@@ -21,14 +45,26 @@ export const createBooking = async (
   try {
     const user = getAuthenticatedUser(req);
 
-    const {
-      studioId,
-      bookingDate,
-      startTime,
-      endTime,
-    } = req.body;
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: "Please log in to create a booking",
+      });
+      return;
+    }
 
-    if (!studioId || !bookingDate || !startTime || !endTime) {
+    const { studioId, bookingDate, startTime, endTime } = req.body;
+
+    if (
+      typeof studioId !== "string" ||
+      typeof bookingDate !== "string" ||
+      typeof startTime !== "string" ||
+      typeof endTime !== "string" ||
+      !studioId ||
+      !bookingDate ||
+      !startTime ||
+      !endTime
+    ) {
       res.status(400).json({
         success: false,
         message: "Please provide all required booking information",
@@ -44,9 +80,25 @@ export const createBooking = async (
       return;
     }
 
-    const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    if (!isValidBookingDate(bookingDate)) {
+      res.status(400).json({
+        success: false,
+        message: "Please provide a valid booking date",
+      });
+      return;
+    }
 
-    if (!timePattern.test(startTime) || !timePattern.test(endTime)) {
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (bookingDate < today) {
+      res.status(400).json({
+        success: false,
+        message: "Booking date cannot be in the past",
+      });
+      return;
+    }
+
+    if (!isValidTime(startTime) || !isValidTime(endTime)) {
       res.status(400).json({
         success: false,
         message: "Please provide valid booking times",
@@ -54,13 +106,8 @@ export const createBooking = async (
       return;
     }
 
-    const startMinutes =
-      Number(startTime.slice(0, 2)) * 60 +
-      Number(startTime.slice(3, 5));
-
-    const endMinutes =
-      Number(endTime.slice(0, 2)) * 60 +
-      Number(endTime.slice(3, 5));
+    const startMinutes = getTimeInMinutes(startTime);
+    const endMinutes = getTimeInMinutes(endTime);
 
     if (endMinutes <= startMinutes) {
       res.status(400).json({
@@ -84,13 +131,27 @@ export const createBooking = async (
       return;
     }
 
-    const conflictingBooking = await db.collection<Booking>("bookings").findOne({
-      studioId: new ObjectId(studioId),
-      bookingDate,
-      status: "Confirmed",
-      startTime: { $lt: endTime },
-      endTime: { $gt: startTime },
-    });
+    if (
+      typeof studio.hourlyRate !== "number" ||
+      !Number.isFinite(studio.hourlyRate) ||
+      studio.hourlyRate < 0
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "This studio has invalid pricing",
+      });
+      return;
+    }
+
+    const conflictingBooking = await db
+      .collection<Booking>("bookings")
+      .findOne({
+        studioId: new ObjectId(studioId),
+        bookingDate,
+        status: "Confirmed",
+        startTime: { $lt: endTime },
+        endTime: { $gt: startTime },
+      });
 
     if (conflictingBooking) {
       res.status(409).json({
@@ -106,7 +167,7 @@ export const createBooking = async (
     if (!Number.isFinite(totalPrice) || totalPrice < 0) {
       res.status(400).json({
         success: false,
-        message: "Invalid studio pricing",
+        message: "Invalid booking price",
       });
       return;
     }
@@ -127,7 +188,9 @@ export const createBooking = async (
       updatedAt: now,
     };
 
-    const result = await db.collection<Booking>("bookings").insertOne(bookingData);
+    const result = await db
+      .collection<Booking>("bookings")
+      .insertOne(bookingData);
 
     res.status(201).json({
       success: true,
@@ -153,6 +216,14 @@ export const getMyBookings = async (
 ): Promise<void> => {
   try {
     const user = getAuthenticatedUser(req);
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: "Please log in to view your bookings",
+      });
+      return;
+    }
 
     const db = getDB();
 
@@ -183,6 +254,15 @@ export const cancelBooking = async (
 ): Promise<void> => {
   try {
     const user = getAuthenticatedUser(req);
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: "Please log in to cancel a booking",
+      });
+      return;
+    }
+
     const id = req.params.id as string;
 
     if (!ObjectId.isValid(id)) {
